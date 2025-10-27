@@ -11,6 +11,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Production environment template is safe to commit
+# .env.production
+
 # Build outputs
 dist/
 build/
