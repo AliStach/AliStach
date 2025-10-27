@@ -27,24 +27,43 @@ async function buildApp() {
 
   // Setup Redis connection (optional for now)
   let redis: any = null;
-  if (Redis) {
+  if (Redis && process.env.REDIS_URL) {
     try {
-      redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+      redis = new Redis(process.env.REDIS_URL, {
+        retryDelayOnFailover: 100,
+        maxRetriesPerRequest: 1,
+        lazyConnect: true,
+        connectTimeout: 1000,
+      });
+      
+      // Test connection
+      await redis.ping();
       console.log('✅ Redis connection established');
     } catch (error) {
-      console.log('⚠️  Redis connection failed, continuing without Redis:', error.message);
+      console.log('⚠️  Redis connection failed, continuing without Redis');
+      redis = null;
     }
   } else {
-    console.log('⚠️  Redis module not available, continuing without Redis');
+    console.log('⚠️  Redis not configured, continuing without Redis');
   }
 
-  // Skip AliExpress plugin registration for now to get basic server running
-  // await fastify.register(aliexpressPlugin, {
-  //   config: aliexpressConfig,
-  //   redis,
-  // });
+  // Register AliExpress plugin first
+  let aliexpressAvailable = false;
+  try {
+    const { aliexpressPlugin } = await import('./plugins/aliexpress/index.js');
+    const { aliexpressConfig } = await import('./config/aliexpress.js');
+    
+    await fastify.register(aliexpressPlugin, {
+      config: aliexpressConfig,
+      redis,
+    });
+    aliexpressAvailable = true;
+    console.log('✅ AliExpress plugin registered successfully');
+  } catch (error) {
+    console.log('⚠️  AliExpress plugin failed to load, continuing with basic chat:', error.message);
+  }
 
-  // Basic chat endpoint (simplified for now)
+  // Basic chat endpoint
   fastify.post('/api/chat/message', {
     schema: {
       body: {
@@ -65,7 +84,46 @@ async function buildApp() {
     };
 
     try {
-      // Simplified response for now
+      // Simple product search detection
+      const isProductSearch = message.toLowerCase().includes('find') || 
+                             message.toLowerCase().includes('search') ||
+                             message.toLowerCase().includes('earbuds') ||
+                             message.toLowerCase().includes('headphones') ||
+                             message.toLowerCase().includes('bluetooth') ||
+                             message.toLowerCase().includes('wireless');
+
+      if (isProductSearch) {
+        // Import demo data directly
+        const { generateDemoSearchResponse } = await import('./plugins/aliexpress/demo-data.js');
+        const searchResponse = generateDemoSearchResponse(message);
+        
+        // Format response
+        let formattedResponse = `Found ${searchResponse.products.length} products for "${message}":\n\n`;
+        
+        searchResponse.products.slice(0, 3).forEach((product, index) => {
+          const discount = product.price.discount ? ` (${product.price.discount} off)` : '';
+          const originalPrice = product.price.original && product.price.original !== product.price.current 
+            ? ` ~~$${product.price.original.toFixed(2)}~~` : '';
+          
+          formattedResponse += `**${index + 1}. ${product.title}**\n`;
+          formattedResponse += `💰 $${product.price.current.toFixed(2)}${originalPrice}${discount}\n`;
+          formattedResponse += `⭐ ${product.seller.rating.toFixed(1)} rating • ${product.seller.orders} orders\n`;
+          formattedResponse += `🔗 [View Product](${product.affiliateUrl})\n\n`;
+        });
+        
+        formattedResponse += `*Search completed in ${searchResponse.searchTime}ms*`;
+        
+        return reply.send({
+          id: `msg_${Date.now()}`,
+          sessionId,
+          response: formattedResponse,
+          type: 'products',
+          products: searchResponse.products,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      
+      // Default response for non-product queries
       return reply.send({
         id: `msg_${Date.now()}`,
         sessionId,

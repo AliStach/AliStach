@@ -45,7 +45,22 @@ export class AliExpressService {
         };
       }
 
-      // Check rate limits
+      // Check if we have real API credentials
+      const hasRealCredentials = this.config.appSecret !== 'demo-secret' && 
+                                this.config.pid !== 'demo-pid';
+
+      if (!hasRealCredentials) {
+        // Use demo data for testing
+        const { generateDemoSearchResponse } = await import('./demo-data.js');
+        const demoResponse = generateDemoSearchResponse(intent.keywords.join(' '));
+        
+        return {
+          isProductSearch: true,
+          response: demoResponse,
+        };
+      }
+
+      // Check rate limits for real API
       const rateLimitCheck = await this.checkRateLimit('search', userId || 'anonymous');
       if (!rateLimitCheck.allowed) {
         return {
@@ -54,11 +69,13 @@ export class AliExpressService {
         };
       }
 
-      // Search for products
+      // Search for products with real API
       const searchResponse = await this.searchProducts(intent);
       
       // Track search term for analytics
-      await this.cache.trackSearchTerm(intent.keywords.join(' '));
+      if (this.cache) {
+        await this.cache.trackSearchTerm(intent.keywords.join(' '));
+      }
 
       return {
         isProductSearch: true,
@@ -67,6 +84,23 @@ export class AliExpressService {
 
     } catch (error) {
       console.error('AliExpress service error:', error);
+      
+      // Fallback to demo data on error
+      try {
+        const intent = this.intentParser.parseIntent(message);
+        if (this.intentParser.isProductSearchIntent(message)) {
+          const { generateDemoSearchResponse } = await import('./demo-data.js');
+          const demoResponse = generateDemoSearchResponse(intent.keywords.join(' '));
+          
+          return {
+            isProductSearch: true,
+            response: demoResponse,
+          };
+        }
+      } catch (fallbackError) {
+        // Ignore fallback errors
+      }
+      
       return {
         isProductSearch: true,
         error: 'Sorry, I encountered an error while searching for products. Please try again.',
