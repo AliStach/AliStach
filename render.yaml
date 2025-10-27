@@ -3,7 +3,7 @@ services:
     name: alistach-gpt-chat
     env: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npx tsx src/app.ts
     healthCheckPath: /health
     envVars:
